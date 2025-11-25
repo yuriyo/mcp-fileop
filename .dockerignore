@@ -1,0 +1,10 @@
+build/
+.git/
+.github/
+.vscode/
+*.md
+!README.md
+uploads/
+.DS_Store
+*.log
+config.json

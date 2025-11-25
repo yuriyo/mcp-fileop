@@ -1,0 +1,52 @@
+# Build directories
+build/
+cmake-build-*/
+
+# vcpkg
+vcpkg/
+
+# Upload directories
+uploads/
+
+# IDE specific
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Compiled Object files
+*.o
+*.obj
+*.lo
+*.slo
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Compiled Static libraries
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+mcp_server
+mcp_stdio
+mcp_stream
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile
+
+# Test binaries
+test_*
+!test_*.cpp
