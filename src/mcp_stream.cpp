@@ -5,29 +5,17 @@
 #include <filesystem>
 #include <memory>
 #include <fstream>
-#include "SegmentRegistry.hpp"
+#include "SegmentRegistry.hpp" // included for historical reasons; registry now encapsulated in FileOpController
 #include "SSEBroadcaster.hpp"
+#include "FileOpController.hpp"
 
-SegmentRegistry registry;
+FileOpController controller;
 SSEBroadcaster broadcaster;
 
 // JSON-RPC 2.0 response helpers
-Json::Value createResponse(const Json::Value& id, const Json::Value& result) {
-    Json::Value response;
-    response["jsonrpc"] = "2.0";
-    response["id"] = id;
-    response["result"] = result;
-    return response;
-}
-
-Json::Value createError(const Json::Value& id, int code, const std::string& message) {
-    Json::Value response;
-    response["jsonrpc"] = "2.0";
-    response["id"] = id;
-    response["error"]["code"] = code;
-    response["error"]["message"] = message;
-    return response;
-}
+// Use the controller helpers
+inline Json::Value createResponse(const Json::Value& id, const Json::Value& result) { return controller.createResponse(id, result); }
+inline Json::Value createError(const Json::Value& id, int code, const std::string& message) { return controller.createError(id, code, message); }
 
 void sendNotification(const std::string& method, const Json::Value& params = Json::Value()) {
     Json::Value notification;
@@ -55,238 +43,40 @@ void handleInitialize(const Json::Value& id, std::function<void(const Json::Valu
 
 // Handle list resources
 void handleListResources(const Json::Value& id, std::function<void(const Json::Value&)> sendResponse) {
-    Json::Value resources(Json::arrayValue);
-    
-    auto handlers = registry.listHandlers();
-    for (const auto& handler : handlers) {
-        auto segment = registry.getByHandler(handler);
-        if (segment) {
-            Json::Value resource;
-            resource["uri"] = "file:///" + handler;
-            resource["name"] = std::filesystem::path(handler).filename().string();
-            resource["description"] = "Memory-mapped file (" + std::to_string(segment->size()) + " bytes)";
-            resource["mimeType"] = "application/octet-stream";
-            resources.append(resource);
-        }
-    }
-    
-    Json::Value result;
-    result["resources"] = resources;
-    
+    Json::Value result = controller.listResources();
     sendResponse(createResponse(id, result));
 }
 
 // Handle read resource
-void handleReadResource(const Json::Value& id, const Json::Value& params, 
-                       std::function<void(const Json::Value&)> sendResponse) {
-    std::string uri = params["uri"].asString();
-    std::string handler = uri.substr(8); // Skip "file:///"
-    
-    auto segment = registry.getByHandler(handler);
-    if (!segment) {
-        sendResponse(createError(id, -32000, "Resource not found"));
+void handleReadResource(const Json::Value& id, const Json::Value& params, std::function<void(const Json::Value&)> sendResponse) {
+    Json::Value result = controller.readResourceFromUri(params);
+    if (result.isMember("__error__")) {
+        sendResponse(createError(id, -32000, result["__error__"].asString()));
         return;
     }
-    
-    const char* data = static_cast<const char*>(segment->data());
-    size_t size = segment->size();
-    
-    Json::Value result;
-    result["contents"][0]["uri"] = uri;
-    result["contents"][0]["mimeType"] = "application/octet-stream";
-    result["contents"][0]["text"] = std::string(data, size);
-    
     sendResponse(createResponse(id, result));
 }
 
 // Handle list tools
 void handleListTools(const Json::Value& id, std::function<void(const Json::Value&)> sendResponse) {
-    Json::Value tools(Json::arrayValue);
-    
-    Json::Value fileOpTool;
-    fileOpTool["name"] = "fileop";
-    fileOpTool["description"] = "File operations tool supporting preload, read, stream_read, and close operations on memory-mapped files";
-    fileOpTool["inputSchema"]["type"] = "object";
-    
-    // operation parameter
-    fileOpTool["inputSchema"]["properties"]["operation"]["type"] = "string";
-    fileOpTool["inputSchema"]["properties"]["operation"]["description"] = "Operation to perform";
-    fileOpTool["inputSchema"]["properties"]["operation"]["enum"].append("preload");
-    fileOpTool["inputSchema"]["properties"]["operation"]["enum"].append("read");
-    fileOpTool["inputSchema"]["properties"]["operation"]["enum"].append("stream_read");
-    fileOpTool["inputSchema"]["properties"]["operation"]["enum"].append("close");
-    
-    // path parameter (for preload)
-    fileOpTool["inputSchema"]["properties"]["path"]["type"] = "string";
-    fileOpTool["inputSchema"]["properties"]["path"]["description"] = "File path to preload (required for 'preload' operation)";
-    
-    // handler parameter (for read, stream_read, close)
-    fileOpTool["inputSchema"]["properties"]["handler"]["type"] = "string";
-    fileOpTool["inputSchema"]["properties"]["handler"]["description"] = "Handler ID from preload (required for 'read', 'stream_read', 'close' operations)";
-    
-    // offset parameter (for read, stream_read)
-    fileOpTool["inputSchema"]["properties"]["offset"]["type"] = "number";
-    fileOpTool["inputSchema"]["properties"]["offset"]["description"] = "Byte offset to start reading (required for 'read', 'stream_read')";
-    
-    // size parameter (for read, stream_read)
-    fileOpTool["inputSchema"]["properties"]["size"]["type"] = "number";
-    fileOpTool["inputSchema"]["properties"]["size"]["description"] = "Number of bytes to read (required for 'read', 'stream_read')";
-    
-    // format parameter (for read, stream_read)
-    fileOpTool["inputSchema"]["properties"]["format"]["type"] = "string";
-    fileOpTool["inputSchema"]["properties"]["format"]["enum"].append("binary");
-    fileOpTool["inputSchema"]["properties"]["format"]["enum"].append("hex");
-    fileOpTool["inputSchema"]["properties"]["format"]["enum"].append("text");
-    fileOpTool["inputSchema"]["properties"]["format"]["description"] = "Output format (optional for 'read', 'stream_read', default: 'text')";
-    fileOpTool["inputSchema"]["properties"]["format"]["default"] = "text";
-    
-    // chunk_size parameter (for stream_read)
-    fileOpTool["inputSchema"]["properties"]["chunk_size"]["type"] = "number";
-    fileOpTool["inputSchema"]["properties"]["chunk_size"]["description"] = "Size of each chunk (optional for 'stream_read', default: 65536)";
-    fileOpTool["inputSchema"]["properties"]["chunk_size"]["default"] = 65536;
-    
-    // Required fields
-    fileOpTool["inputSchema"]["required"].append("operation");
-    
-    tools.append(fileOpTool);
-    
-    Json::Value result;
-    result["tools"] = tools;
-    
+    Json::Value result = controller.listTools();
     sendResponse(createResponse(id, result));
 }
 
 // Handle tool calls
-void handleCallTool(const Json::Value& id, const Json::Value& params,
-                   std::function<void(const Json::Value&)> sendResponse,
-                   std::function<void(const Json::Value&)> sendProgress) {
-    std::string toolName = params["name"].asString();
-    Json::Value arguments = params["arguments"];
-    Json::Value result;
-    
-    try {
-        if (toolName != "fileop") {
-            sendResponse(createError(id, -32601, "Unknown tool: " + toolName));
-            return;
-        }
-        
-        std::string operation = arguments["operation"].asString();
-        
-        if (operation == "preload") {
-            std::string path = arguments["path"].asString();
-            auto segment = registry.preload(path);
-            if (segment) {
-                std::filesystem::path canonical_path = std::filesystem::canonical(path);
-                std::string handler = canonical_path.string();
-                
-                result["content"][0]["type"] = "text";
-                result["content"][0]["text"] = "File preloaded successfully.\n\nHandler: " + handler + 
-                                               "\nSize: " + std::to_string(segment->size()) + " bytes" +
-                                               "\nResource URI: file:///" + handler;
-                
-                sendResponse(createResponse(id, result));
-                sendNotification("notifications/resources/list_changed");
-            } else {
-                sendResponse(createError(id, -32000, "Failed to preload file"));
-            }
-        } else if (operation == "read") {
-            std::string handler = arguments["handler"].asString();
-            size_t offset = arguments["offset"].asUInt64();
-            size_t size = arguments["size"].asUInt64();
-            std::string format = arguments.get("format", "text").asString();
-            
-            auto segment = registry.getByHandler(handler);
-            if (!segment) {
-                sendResponse(createError(id, -32000, "Invalid handler"));
-                return;
-            }
-            if (offset + size > segment->size()) {
-                sendResponse(createError(id, -32000, "Read out of bounds"));
-                return;
-            }
-            
-            const char* data = static_cast<const char*>(segment->data()) + offset;
-            std::string content;
-            
-            if (format == "hex") {
-                std::stringstream ss;
-                for (size_t i = 0; i < size; ++i) {
-                    ss << std::hex << std::setw(2) << std::setfill('0') 
-                       << (unsigned int)(unsigned char)data[i];
-                }
-                content = ss.str();
-            } else {
-                content = std::string(data, size);
-            }
-            
-            result["content"][0]["type"] = "text";
-            result["content"][0]["text"] = content;
-            sendResponse(createResponse(id, result));
-            
-        } else if (operation == "stream_read") {
-            std::string handler = arguments["handler"].asString();
-            size_t offset = arguments["offset"].asUInt64();
-            size_t total_size = arguments["size"].asUInt64();
-            size_t chunk_size = arguments.get("chunk_size", 65536).asUInt64();
-            std::string format = arguments.get("format", "text").asString();
-            
-            auto segment = registry.getByHandler(handler);
-            if (!segment) {
-                sendResponse(createError(id, -32000, "Invalid handler"));
-                return;
-            }
-            if (offset + total_size > segment->size()) {
-                sendResponse(createError(id, -32000, "Read out of bounds"));
-                return;
-            }
-            
-            // Stream chunks with progress
-            size_t remaining = total_size;
-            size_t current_offset = offset;
-            std::stringstream full_content;
-            
-            while (remaining > 0) {
-                size_t current_chunk = std::min(chunk_size, remaining);
-                const char* data = static_cast<const char*>(segment->data()) + current_offset;
-                
-                if (format == "hex") {
-                    for (size_t i = 0; i < current_chunk; ++i) {
-                        full_content << std::hex << std::setw(2) << std::setfill('0') 
-                                    << (unsigned int)(unsigned char)data[i];
-                    }
-                } else {
-                    full_content << std::string(data, current_chunk);
-                }
-                
-                // Send progress notification
-                Json::Value progress;
-                progress["bytes_read"] = (Json::Value::UInt64)(total_size - remaining + current_chunk);
-                progress["total_bytes"] = (Json::Value::UInt64)total_size;
-                progress["progress"] = (double)(total_size - remaining + current_chunk) / total_size;
-                sendProgress(progress);
-                
-                current_offset += current_chunk;
-                remaining -= current_chunk;
-            }
-            
-            result["content"][0]["type"] = "text";
-            result["content"][0]["text"] = full_content.str();
-            sendResponse(createResponse(id, result));
-            
-        } else if (operation == "close") {
-            std::string handler = arguments["handler"].asString();
-            registry.close(handler);
-            
-            result["content"][0]["type"] = "text";
-            result["content"][0]["text"] = "Handler closed successfully: " + handler;
-            
-            sendResponse(createResponse(id, result));
-            sendNotification("notifications/resources/list_changed");
-        } else {
-            sendResponse(createError(id, -32601, "Unknown operation: " + operation));
-        }
-    } catch (const std::exception& e) {
-        sendResponse(createError(id, -32000, std::string("Error: ") + e.what()));
+void handleCallTool(const Json::Value& id, const Json::Value& params, std::function<void(const Json::Value&)> sendResponse, std::function<void(const Json::Value&)> sendProgress) {
+    // Forward to controller with a progress callback that uses the stream's progress sender.
+    auto progressCb = [sendProgress](const Json::Value& p) {
+        if (sendProgress) sendProgress(p);
+    };
+    Json::Value result = controller.callTool(params, progressCb);
+    if (result.isMember("__error__")) {
+        sendResponse(createError(id, -32000, result["__error__"].asString()));
+        return;
+    }
+    sendResponse(createResponse(id, result));
+    if (result.get("resourceListChanged", false).asBool()) {
+        sendNotification("notifications/resources/list_changed");
     }
 }
 
@@ -401,7 +191,7 @@ int main() {
                         allowedPaths.push_back(pathStr);
                         std::cout << "  - Adding allowed path: " << pathStr << std::endl;
                     }
-                    registry.setAllowedPaths(allowedPaths);
+                    controller.setAllowedPaths(allowedPaths);
                     std::cout << "Configured " << allowedPaths.size() << " allowed path(s)" << std::endl;
                 } else {
                     std::cout << "No 'allowed_paths' key in mcp config" << std::endl;

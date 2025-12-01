@@ -20,6 +20,7 @@ if(taskflow_FOUND AND glaze_FOUND)
         src/MemorySegment.cpp
         src/TaskflowManager.cpp
         src/SSEBroadcaster.cpp
+        src/LineUtils.cpp
     )
     # Link libraries
     target_link_libraries(mcp_server PRIVATE Drogon::Drogon Boost::interprocess Taskflow::Taskflow glaze::glaze)
@@ -30,6 +31,8 @@ add_executable(mcp_stdio
     src/mcp_stdio.cpp
     src/SegmentRegistry.cpp
     src/MemorySegment.cpp
+    src/FileOpController.cpp
+    src/LineUtils.cpp
 )
 
 # Link libraries for stdio version
@@ -41,6 +44,8 @@ add_executable(mcp_stream
     src/SegmentRegistry.cpp
     src/MemorySegment.cpp
     src/SSEBroadcaster.cpp
+    src/FileOpController.cpp
+    src/LineUtils.cpp
 )
 
 # Link libraries for streaming version

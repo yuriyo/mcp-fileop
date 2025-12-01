@@ -60,13 +60,13 @@ See `.github/vscode-mcp-integration.md` for detailed integration guide.
 
 ## API
 
-### MCP Protocol (stdio)
-- **Tools**: preload, read, close
+- **Tools**: preload, read, read_multiple, close
+- Note: For 'read' and 'read_multiple', results are returned as an array in `result.content[]` where each item contains a `parts[]` array with `{offset,size,text}`. `read` is equivalent to a single `content` / single `parts` entry.
 - **Resources**: Lists preloaded files as resources
 - **Protocol**: JSON-RPC 2.0 over stdio
 
 ### HTTP API (legacy)
-- `POST /mcp` - Operations: preload, read, close
+- `POST /mcp` - Operations: preload, read, read_multiple, close
 - `GET /events` - Server-Sent Events
 
 See `mcp_server_design.md` for full design details.

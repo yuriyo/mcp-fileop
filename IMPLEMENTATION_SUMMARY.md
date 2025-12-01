@@ -74,7 +74,7 @@ Memory-map a file for efficient reading.
 **Returns**: Handler ID (canonical path), file size, resource URI
 
 ### 2. read
-Read a specific byte range from a preloaded file.
+Read a specific byte range from a preloaded file. Returns a `content[]` array with `parts[]` entries for the requested ranges.
 ```json
 {
     "name": "read",
@@ -86,13 +86,13 @@ Read a specific byte range from a preloaded file.
     }
 }
 ```
-**Returns**: Requested data in specified format
+**Returns**: `content[]` where `content[i].parts[]` contains the requested range(s) with offsets and text
 
-### 3. stream_read (mcp_stream only)
+### 3. stream_read (REMOVED)
 Stream read with chunking and progress updates.
 ```json
 {
-    "name": "stream_read",
+    "name": "stream_read", // REMOVED
     "arguments": {
         "handler": "/path/to/file",
         "offset": 0,
@@ -142,7 +142,7 @@ Sent when files are preloaded or closed:
 }
 ```
 
-### progress (stream_read only)
+### progress (previously used by stream_read; now available via read_multiple)
 Sent during streaming operations:
 ```json
 {
@@ -220,7 +220,7 @@ curl -X POST http://localhost:8080/mcp \
 Use `mcp_stdio` or `mcp_server` with `read` tool.
 
 ### Large Files (> 1GB)
-Use `mcp_stream` with `stream_read` tool for:
+Use `mcp_stream` with `read_multiple` for multiple ranges with progress updates:
 - ZIP file analysis
 - Log file processing
 - Binary data extraction

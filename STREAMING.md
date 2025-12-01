@@ -78,28 +78,32 @@ ws.onmessage = (event) => {
 };
 ```
 
-### Stream Read Tool
-The new `stream_read` tool provides chunked reading with progress updates:
+### Read Multiple Tool (progress support)
+Use `read_multiple` to request multiple byte ranges across one or more preloaded handlers. This is the primary tool for reading large files or multiple segments with progress notifications.
 
+Example:
 ```json
 {
     "jsonrpc": "2.0",
     "id": 1,
     "method": "tools/call",
     "params": {
-        "name": "stream_read",
+        "name": "fileop",
         "arguments": {
-            "handler": "/path/to/file",
-            "offset": 0,
-            "size": 10485760,
-            "chunk_size": 65536,
-            "format": "hex"
+            "operation": "read_multiple",
+            "segments": [
+                {
+                    "handler": "/path/to/file",
+                    "format": "hex",
+                    "ranges": [ { "offset": 0, "size": 65536 }, { "offset": 1048576, "size": 65536 } ]
+                }
+            ]
         }
     }
 }
 ```
 
-Progress notifications will be sent during the read operation:
+Progress notifications will be sent during the read_multiple operation:
 ```json
 {
     "jsonrpc": "2.0",
@@ -108,8 +112,8 @@ Progress notifications will be sent during the read operation:
         "progressToken": 1,
         "value": {
             "bytes_read": 65536,
-            "total_bytes": 10485760,
-            "progress": 0.00625
+            "total_bytes": 131072,
+            "progress": 0.50
         }
     }
 }
@@ -150,23 +154,43 @@ Read a specific range of bytes.
 }
 ```
 
-### 3. stream_read (mcp_stream only)
-Stream read with progress updates.
+Example response (single-range reads return `content[]` with a `parts[]` containing the single requested range):
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 4,
+    "result": {
+        "content": [
+            {
+                "handler": "/path/to/file",
+                    "format": "hex",
+                "parts": [
+                    { "offset": 0, "size": 1024, "text": "0a1b2c..." }
+                ]
+            }
+        ]
+    }
+}
+```
+
+### 3. read_multiple
+Read multiple ranges from one or more handlers and receive progress updates.
 ```json
 {
     "method": "tools/call",
     "params": {
-        "name": "stream_read",
+        "name": "fileop",
         "arguments": {
-            "handler": "/path/to/file",
-            "offset": 0,
-            "size": 10485760,
-            "chunk_size": 65536,
-            "format": "hex"
+            "operation": "read_multiple",
+            "segments": [
+                { "handler": "/path/to/file", "format": "text", "ranges": [{ "offset": 0, "size": 1024 }] }
+            ]
         }
     }
 }
 ```
+
+Note: `format` may now also be set to `lines`. When `format` is `lines`, ranges are specified with `offset` as the starting line (0-based) and `size` as the maximum number of lines to read. The server will return the concatenated original bytes of the requested lines (including newline sequences) in the `parts[].text` field. Progress and byte counts are reported in terms of bytes read.
 
 ### 4. close
 Close and unmap a file handler.
@@ -294,20 +318,19 @@ ws.onmessage = (event) => {
     const msg = JSON.parse(event.data);
     
     if (msg.id === 1 && msg.result) {
-        // 2. Start streaming read
+        // 2. Start a read (use read_multiple for progress)
         const handler = msg.result.content[0].text.match(/Handler: (.+)/)[1];
         ws.send(JSON.stringify({
             jsonrpc: "2.0",
             id: 2,
             method: "tools/call",
             params: {
-                name: "stream_read",
+                name: "fileop",
                 arguments: {
-                    handler: handler,
-                    offset: 0,
-                    size: 125238407,
-                    chunk_size: 65536,
-                    format: "hex"
+                    operation: "read_multiple",
+                    segments: [
+                        { handler: handler, ranges: [{ offset: 0, size: 125238407 }], format: "hex" }
+                    ]
                 }
             }
         }));
@@ -317,7 +340,9 @@ ws.onmessage = (event) => {
         console.log(`Progress: ${progress.toFixed(2)}%`);
     } else if (msg.id === 2 && msg.result) {
         // 4. Processing complete
-        console.log('Read complete, got', msg.result.content[0].text.length, 'bytes');
+        // read_multiple returns result.content[] where each item has parts[] with text
+        const readBytes = msg.result.content[0].parts.reduce((sum, p) => sum + p.size, 0);
+        console.log('Read complete, got', readBytes, 'bytes');
     }
 };
 ```

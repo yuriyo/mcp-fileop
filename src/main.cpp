@@ -7,6 +7,9 @@
 #include "SegmentRegistry.hpp"
 #include "TaskflowManager.hpp"
 
+// 'lines' helper code moved to LineUtils.hpp so it can be shared across modules
+#include "LineUtils.hpp"
+
 SegmentRegistry registry;
 TaskflowManager taskflow;
 
@@ -67,6 +70,14 @@ void handleMcpRequest(const drogon::HttpRequestPtr& req, std::function<void(cons
                     response["data"] = ss.str();
                 } else if (format == "text") {
                     response["data"] = std::string(data, size);
+                } else if (format == "lines") {
+                    size_t start_byte = 0, bytes_len = 0;
+                    if (!compute_line_byte_range(data, segment->size(), offset, size, start_byte, bytes_len)) {
+                        response["error"]["code"] = "read_failed";
+                        response["error"]["message"] = "Read out of bounds (lines)";
+                    } else {
+                        response["data"] = std::string(data + start_byte, bytes_len);
+                    }
                 } else {
                     response["error"]["code"] = "read_failed";
                     response["error"]["message"] = "Invalid format";

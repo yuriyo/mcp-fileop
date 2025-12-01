@@ -3,26 +3,18 @@
 #include <sstream>
 #include <filesystem>
 #include <json/json.h>
-#include "SegmentRegistry.hpp"
+#include "FileOpController.hpp"
+// SegmentRegistry is now managed via FileOpController
 
-SegmentRegistry registry;
+FileOpController controller;
 
-// JSON-RPC 2.0 response helper
-Json::Value createResponse(const Json::Value& id, const Json::Value& result) {
-    Json::Value response;
-    response["jsonrpc"] = "2.0";
-    response["id"] = id;
-    response["result"] = result;
-    return response;
+// Keep local helper wrappers for backward-compat with existing code
+inline Json::Value createResponse(const Json::Value& id, const Json::Value& result) {
+    return controller.createResponse(id, result);
 }
 
-Json::Value createError(const Json::Value& id, int code, const std::string& message) {
-    Json::Value response;
-    response["jsonrpc"] = "2.0";
-    response["id"] = id;
-    response["error"]["code"] = code;
-    response["error"]["message"] = message;
-    return response;
+inline Json::Value createError(const Json::Value& id, int code, const std::string& message) {
+    return controller.createError(id, code, message);
 }
 
 void handleInitialize(const Json::Value& id) {
@@ -41,25 +33,7 @@ void handleInitialize(const Json::Value& id) {
 }
 
 void handleListResources(const Json::Value& id) {
-    Json::Value resources(Json::arrayValue);
-    
-    // Get all preloaded files from registry
-    auto handlers = registry.listHandlers();
-    for (const auto& handler : handlers) {
-        auto segment = registry.getByHandler(handler);
-        if (segment) {
-            Json::Value resource;
-            resource["uri"] = "file:///" + handler;
-            resource["name"] = std::filesystem::path(handler).filename().string();
-            resource["description"] = "Memory-mapped file (" + std::to_string(segment->size()) + " bytes)";
-            resource["mimeType"] = "application/octet-stream";
-            resources.append(resource);
-        }
-    }
-    
-    Json::Value result;
-    result["resources"] = resources;
-    
+    Json::Value result = controller.listResources();
     Json::Value response = createResponse(id, result);
     Json::StreamWriterBuilder writer;
     writer["indentation"] = "";  // Compact output
@@ -67,29 +41,14 @@ void handleListResources(const Json::Value& id) {
 }
 
 void handleReadResource(const Json::Value& id, const Json::Value& params) {
-    std::string uri = params["uri"].asString();
-    
-    // Extract handler from URI (file:///path -> /path)
-    std::string handler = uri.substr(8); // Skip "file:///"
-    
-    auto segment = registry.getByHandler(handler);
-    if (!segment) {
-        Json::Value response = createError(id, -32000, "Resource not found");
+    Json::Value result = controller.readResourceFromUri(params);
+    if (result.isMember("__error__")) {
+        Json::Value response = createError(id, -32000, result["__error__"].asString());
         Json::StreamWriterBuilder writer;
         writer["indentation"] = "";
         std::cout << Json::writeString(writer, response) << std::endl;
         return;
     }
-    
-    // Read entire file content
-    const char* data = static_cast<const char*>(segment->data());
-    size_t size = segment->size();
-    
-    Json::Value result;
-    result["contents"][0]["uri"] = uri;
-    result["contents"][0]["mimeType"] = "application/octet-stream";
-    result["contents"][0]["text"] = std::string(data, size);
-    
     Json::Value response = createResponse(id, result);
     Json::StreamWriterBuilder writer;
     writer["indentation"] = "";
@@ -97,50 +56,7 @@ void handleReadResource(const Json::Value& id, const Json::Value& params) {
 }
 
 void handleListTools(const Json::Value& id) {
-    Json::Value tools(Json::arrayValue);
-    
-    Json::Value preloadTool;
-    preloadTool["name"] = "preload";
-    preloadTool["description"] = "Memory-map a file for efficient reading. The file becomes available as a resource.";
-    preloadTool["inputSchema"]["type"] = "object";
-    preloadTool["inputSchema"]["properties"]["path"]["type"] = "string";
-    preloadTool["inputSchema"]["properties"]["path"]["description"] = "File path to preload";
-    preloadTool["inputSchema"]["required"].append("path");
-    tools.append(preloadTool);
-    
-    Json::Value readTool;
-    readTool["name"] = "read";
-    readTool["description"] = "Read a specific range of bytes from a preloaded file";
-    readTool["inputSchema"]["type"] = "object";
-    readTool["inputSchema"]["properties"]["handler"]["type"] = "string";
-    readTool["inputSchema"]["properties"]["handler"]["description"] = "Handler ID from preload (canonical file path)";
-    readTool["inputSchema"]["properties"]["offset"]["type"] = "number";
-    readTool["inputSchema"]["properties"]["offset"]["description"] = "Byte offset to start reading";
-    readTool["inputSchema"]["properties"]["size"]["type"] = "number";
-    readTool["inputSchema"]["properties"]["size"]["description"] = "Number of bytes to read";
-    readTool["inputSchema"]["properties"]["format"]["type"] = "string";
-    readTool["inputSchema"]["properties"]["format"]["enum"].append("binary");
-    readTool["inputSchema"]["properties"]["format"]["enum"].append("hex");
-    readTool["inputSchema"]["properties"]["format"]["enum"].append("text");
-    readTool["inputSchema"]["properties"]["format"]["description"] = "Output format";
-    readTool["inputSchema"]["properties"]["format"]["default"] = "text";
-    readTool["inputSchema"]["required"].append("handler");
-    readTool["inputSchema"]["required"].append("offset");
-    readTool["inputSchema"]["required"].append("size");
-    tools.append(readTool);
-    
-    Json::Value closeTool;
-    closeTool["name"] = "close";
-    closeTool["description"] = "Close and unmap a file handler, removing it from resources";
-    closeTool["inputSchema"]["type"] = "object";
-    closeTool["inputSchema"]["properties"]["handler"]["type"] = "string";
-    closeTool["inputSchema"]["properties"]["handler"]["description"] = "Handler ID to close";
-    closeTool["inputSchema"]["required"].append("handler");
-    tools.append(closeTool);
-    
-    Json::Value result;
-    result["tools"] = tools;
-    
+    Json::Value result = controller.listTools();
     Json::Value response = createResponse(id, result);
     Json::StreamWriterBuilder writer;
     writer["indentation"] = "";
@@ -158,109 +74,23 @@ void sendResourceListChanged() {
 }
 
 void handleCallTool(const Json::Value& id, const Json::Value& params) {
-    std::string toolName = params["name"].asString();
-    Json::Value arguments = params["arguments"];
-    Json::Value result;
-    
-    try {
-        if (toolName == "preload") {
-            std::string path = arguments["path"].asString();
-            auto segment = registry.preload(path);
-            if (segment) {
-                std::filesystem::path canonical_path = std::filesystem::canonical(path);
-                std::string handler = canonical_path.string();
-                
-                result["content"][0]["type"] = "text";
-                result["content"][0]["text"] = "File preloaded successfully.\n\nHandler: " + handler + 
-                                               "\nSize: " + std::to_string(segment->size()) + " bytes" +
-                                               "\nResource URI: file:///" + handler;
-                
-                // Send notification that resources list changed
-                Json::Value response = createResponse(id, result);
-                Json::StreamWriterBuilder writer;
-                writer["indentation"] = "";
-                std::cout << Json::writeString(writer, response) << std::endl;
-                
-                sendResourceListChanged();
-                return;
-            } else {
-                Json::Value response = createError(id, -32000, "Failed to preload file");
-                Json::StreamWriterBuilder writer;
-                writer["indentation"] = "";
-                std::cout << Json::writeString(writer, response) << std::endl;
-                return;
-            }
-        } else if (toolName == "read") {
-            std::string handler = arguments["handler"].asString();
-            size_t offset = arguments["offset"].asUInt64();
-            size_t size = arguments["size"].asUInt64();
-            std::string format = arguments.get("format", "text").asString();
-            
-            auto segment = registry.getByHandler(handler);
-            if (!segment) {
-                Json::Value response = createError(id, -32000, "Invalid handler: " + handler);
-                Json::StreamWriterBuilder writer;
-                writer["indentation"] = "";
-                std::cout << Json::writeString(writer, response) << std::endl;
-                return;
-            }
-            if (offset + size > segment->size()) {
-                Json::Value response = createError(id, -32000, "Read out of bounds. File size: " + 
-                                                   std::to_string(segment->size()) + " bytes, requested: " + 
-                                                   std::to_string(offset + size) + " bytes");
-                Json::StreamWriterBuilder writer;
-                writer["indentation"] = "";
-                std::cout << Json::writeString(writer, response) << std::endl;
-                return;
-            }
-            
-            const char* data = static_cast<const char*>(segment->data()) + offset;
-            std::string content;
-            
-            if (format == "hex") {
-                std::stringstream ss;
-                for (size_t i = 0; i < size; ++i) {
-                    ss << std::hex << std::setw(2) << std::setfill('0') << (unsigned int)(unsigned char)data[i];
-                }
-                content = ss.str();
-            } else {
-                content = std::string(data, size);
-            }
-            
-            result["content"][0]["type"] = "text";
-            result["content"][0]["text"] = content;
-        } else if (toolName == "close") {
-            std::string handler = arguments["handler"].asString();
-            registry.close(handler);
-            
-            result["content"][0]["type"] = "text";
-            result["content"][0]["text"] = "Handler closed successfully: " + handler;
-            
-            // Send notification that resources list changed
-            Json::Value response = createResponse(id, result);
-            Json::StreamWriterBuilder writer;
-            writer["indentation"] = "";
-            std::cout << Json::writeString(writer, response) << std::endl;
-            
-            sendResourceListChanged();
-            return;
-        } else {
-            Json::Value response = createError(id, -32601, "Unknown tool: " + toolName);
-            Json::StreamWriterBuilder writer;
-            writer["indentation"] = "";
-            std::cout << Json::writeString(writer, response) << std::endl;
-            return;
-        }
-        
-        Json::Value response = createResponse(id, result);
+    auto progressCallback = [](const Json::Value&) {
+        // stdio doesn't emit progress updates
+    };
+    Json::Value result = controller.callTool(params, progressCallback);
+    if (result.isMember("__error__")) {
+        Json::Value response = createError(id, -32000, result["__error__"].asString());
         Json::StreamWriterBuilder writer;
         writer["indentation"] = "";
         std::cout << Json::writeString(writer, response) << std::endl;
-    } catch (const std::exception& e) {
-        Json::Value response = createError(id, -32000, std::string("Error: ") + e.what());
-        Json::StreamWriterBuilder writer;
-        writer["indentation"] = "";
-        std::cout << Json::writeString(writer, response) << std::endl;
+        return;
+    }
+    Json::Value response = createResponse(id, result);
+    Json::StreamWriterBuilder writer;
+    writer["indentation"] = "";
+    std::cout << Json::writeString(writer, response) << std::endl;
+    if (result.get("resourceListChanged", false).asBool()) {
+        sendResourceListChanged();
     }
 }
 
