@@ -59,15 +59,19 @@ int main() {
         Json::Value res = controller.callTool(call, progressCb);
         ASSERT_TRUE(!res.isMember("__error__"));
         ASSERT_TRUE(res.isMember("content"));
-        // Expect 3 content entries
+        // Expect 3 content entries (MCP format: each range becomes a content item)
         ASSERT_TRUE(res["content"].size() == 3);
 
         // s1 lines: line 1 -> "World\n"
-        ASSERT_TRUE(res["content"][0]["parts"][0]["text"].asString() == std::string("World\n"));
+        ASSERT_TRUE(res["content"][0]["type"].asString() == "text");
+        ASSERT_TRUE(res["content"][0]["text"].asString() == std::string("World\n"));
         // s2 hex equals to hex(binary)
-        ASSERT_TRUE(res["content"][1]["parts"][0]["text"].asString() == to_hex(binary));
+        ASSERT_TRUE(res["content"][1]["type"].asString() == "bytes");
+        ASSERT_TRUE(res["content"][1]["format"].asString() == "hex");
+        ASSERT_TRUE(res["content"][1]["text"].asString() == to_hex(binary));
         // s3 text first 5 chars = "Hello"
-        ASSERT_TRUE(res["content"][2]["parts"][0]["text"].asString() == std::string("Hello"));
+        ASSERT_TRUE(res["content"][2]["type"].asString() == "text");
+        ASSERT_TRUE(res["content"][2]["text"].asString() == std::string("Hello"));
 
         ASSERT_TRUE(!progress_list.empty());
 

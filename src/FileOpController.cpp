@@ -50,11 +50,11 @@ Json::Value FileOpController::listTools() const {
 
     // offset parameter (for read)
     fileOpTool["inputSchema"]["properties"]["offset"]["type"] = "number";
-    fileOpTool["inputSchema"]["properties"]["offset"]["description"] = "Byte offset to start reading (required for 'read')";
+    fileOpTool["inputSchema"]["properties"]["offset"]["description"] = "Starting position to read from (required for 'read'). For 'lines' format: zero-based line number. For all other formats: byte offset.";
 
     // size parameter (for read)
     fileOpTool["inputSchema"]["properties"]["size"]["type"] = "number";
-    fileOpTool["inputSchema"]["properties"]["size"]["description"] = "Number of bytes to read (required for 'read')";
+    fileOpTool["inputSchema"]["properties"]["size"]["description"] = "Amount to read (required for 'read'). For 'lines' format: number of lines to read. For all other formats: number of bytes to read.";
 
     // format parameter (for read, stream_read)
     fileOpTool["inputSchema"]["properties"]["format"]["type"] = "string";
@@ -62,7 +62,7 @@ Json::Value FileOpController::listTools() const {
     fileOpTool["inputSchema"]["properties"]["format"]["enum"].append("hex");
     fileOpTool["inputSchema"]["properties"]["format"]["enum"].append("text");
     fileOpTool["inputSchema"]["properties"]["format"]["enum"].append("lines");
-    fileOpTool["inputSchema"]["properties"]["format"]["description"] = "Output format (optional for 'read' and 'read_multiple', default: 'text')";
+    fileOpTool["inputSchema"]["properties"]["format"]["description"] = "Output format (optional for 'read' and 'read_multiple', default: 'text'). When format is 'lines', offset/size parameters are interpreted as line numbers/counts instead of byte offsets/sizes.";
     fileOpTool["inputSchema"]["properties"]["format"]["default"] = "text";
 
     // Deprecated: chunk_size was used for stream_read; not supported anymore.
@@ -80,7 +80,9 @@ Json::Value FileOpController::listTools() const {
     fileOpTool["inputSchema"]["properties"]["segments"]["items"]["properties"]["ranges"]["type"] = "array";
     fileOpTool["inputSchema"]["properties"]["segments"]["items"]["properties"]["ranges"]["items"]["type"] = "object";
     fileOpTool["inputSchema"]["properties"]["segments"]["items"]["properties"]["ranges"]["items"]["properties"]["offset"]["type"] = "number";
+    fileOpTool["inputSchema"]["properties"]["segments"]["items"]["properties"]["offset"]["description"] = "Starting position. For 'lines' format: zero-based line number. For other formats: byte offset.";
     fileOpTool["inputSchema"]["properties"]["segments"]["items"]["properties"]["ranges"]["items"]["properties"]["size"]["type"] = "number";
+    fileOpTool["inputSchema"]["properties"]["segments"]["items"]["properties"]["size"]["description"] = "Amount to read. For 'lines' format: number of lines. For other formats: number of bytes.";
 
     // Required fields
     fileOpTool["inputSchema"]["required"].append("operation");
@@ -247,8 +249,9 @@ Json::Value FileOpController::callTool(const Json::Value& params, std::function<
             }
             uint64_t bytes_so_far = 0;
 
-            // Build result contents
-            int content_index = 0;
+            // Build result contents conforming to MCP Tool Result Schema
+            Json::Value content_array(Json::arrayValue);
+            
             for (const auto& s : arguments["segments"]) {
                 std::string handler = s["handler"].asString();
                 std::string format = s.get("format", Json::Value("text")).asString();
@@ -257,14 +260,13 @@ Json::Value FileOpController::callTool(const Json::Value& params, std::function<
                     result["__error__"] = std::string("Invalid handler: ") + handler;
                     return result;
                 }
-                result["content"][content_index]["handler"] = handler;
-                result["content"][content_index]["format"] = format;
-                int part_index = 0;
+                
                 for (const auto& r : s["ranges"]) {
                     size_t offset = r["offset"].asUInt64();
                     size_t size = r["size"].asUInt64();
                     std::string content;
                     size_t actual_bytes = 0;
+                    
                     if (format == "lines") {
                         size_t start_byte = 0;
                         size_t bytes_len = 0;
@@ -293,9 +295,17 @@ Json::Value FileOpController::callTool(const Json::Value& params, std::function<
                             actual_bytes = size;
                         }
                     }
-                    result["content"][content_index]["parts"][part_index]["offset"] = (Json::Value::UInt64)offset;
-                    result["content"][content_index]["parts"][part_index]["size"] = (Json::Value::UInt64)size;
-                    result["content"][content_index]["parts"][part_index]["text"] = content;
+                    
+                    // Create MCP-compliant content item
+                    Json::Value content_item;
+                    if (format == "hex" || format == "binary") {
+                        content_item["type"] = "bytes";
+                        content_item["format"] = format;
+                    } else {
+                        content_item["type"] = "text";
+                    }
+                    content_item["text"] = content;
+                    content_array.append(content_item);
 
                     bytes_so_far += actual_bytes;
                     if (progress) {
@@ -305,10 +315,11 @@ Json::Value FileOpController::callTool(const Json::Value& params, std::function<
                         p["progress"] = (double)bytes_so_far / (double)total_bytes;
                         progress(p);
                     }
-                    ++part_index;
                 }
-                ++content_index;
             }
+            
+            // Wrap in MCP Tool Result Schema format
+            result["content"] = content_array;
             return result;
         } else if (operation == "close") {
             std::string handler = arguments["handler"].asString();

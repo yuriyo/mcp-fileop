@@ -54,9 +54,10 @@ int main() {
         readParams["arguments"]["format"] = "text";
         Json::Value readRes = controller.callTool(readParams);
         ASSERT_TRUE(!readRes.isMember("__error__"));
-        // read now returns a content[] array with parts[] inside; check the first part
+        // read now returns MCP-compliant content[] array with type and text
         ASSERT_TRUE(readRes.isMember("content"));
-        ASSERT_TRUE(readRes["content"][0]["parts"][0]["text"].asString() == content);
+        ASSERT_TRUE(readRes["content"][0]["type"].asString() == "text");
+        ASSERT_TRUE(readRes["content"][0]["text"].asString() == content);
 
         // No longer support stream_read; use read or read_multiple
 
@@ -118,7 +119,10 @@ int main() {
             Json::Value rmRes = controller.callTool(rm, rmCb);
             ASSERT_TRUE(!rmRes.isMember("__error__"));
             ASSERT_TRUE(rmRes.isMember("content"));
-            ASSERT_TRUE(rmRes["content"][0]["parts"].size() == 2);
+            // MCP format: each range becomes a separate content item
+            ASSERT_TRUE(rmRes["content"].size() == 2);
+            ASSERT_TRUE(rmRes["content"][0]["type"].asString() == "text");
+            ASSERT_TRUE(rmRes["content"][1]["type"].asString() == "text");
             ASSERT_TRUE(!rmProgress.empty());
 
                 // Also validate legacy top-level name 'read_multiple'
@@ -158,9 +162,11 @@ int main() {
             Json::Value rmLinesRes = controller.callTool(rmLines, rmLinesCb);
             ASSERT_TRUE(!rmLinesRes.isMember("__error__"));
             ASSERT_TRUE(rmLinesRes.isMember("content"));
-            ASSERT_TRUE(rmLinesRes["content"][0]["parts"].size() == 1);
+            // MCP format: single range becomes single content item
+            ASSERT_TRUE(rmLinesRes["content"].size() == 1);
+            ASSERT_TRUE(rmLinesRes["content"][0]["type"].asString() == "text");
             std::string expected = "L2\r\nL3\n";
-            ASSERT_TRUE(rmLinesRes["content"][0]["parts"][0]["text"].asString() == expected);
+            ASSERT_TRUE(rmLinesRes["content"][0]["text"].asString() == expected);
             ASSERT_TRUE(!rmLinesProgress.empty());
         // Cleanup file
         std::filesystem::remove(tmpFile);

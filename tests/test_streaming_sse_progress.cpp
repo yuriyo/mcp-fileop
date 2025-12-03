@@ -55,9 +55,11 @@ int main() {
         Json::Value res = controller.callTool(rm, progressCb);
         ASSERT_TRUE(!res.isMember("__error__"));
         ASSERT_TRUE(res.isMember("content"));
-        ASSERT_TRUE(res["content"][0]["parts"].size() == 1);
+        // MCP format: single range becomes single content item
+        ASSERT_TRUE(res["content"].size() == 1);
+        ASSERT_TRUE(res["content"][0]["type"].asString() == "text");
         std::string expected = "Line2\r\nLine3\n";
-        ASSERT_TRUE(res["content"][0]["parts"][0]["text"].asString() == expected);
+        ASSERT_TRUE(res["content"][0]["text"].asString() == expected);
 
         // Captured broadcasts must contain at least one 'progress' event
         ASSERT_TRUE(!captured.empty());
@@ -89,8 +91,10 @@ int main() {
         Json::Value singleRes = controller.callTool(single);
         ASSERT_TRUE(!singleRes.isMember("__error__"));
         ASSERT_TRUE(singleRes.isMember("content"));
-        ASSERT_TRUE(singleRes["content"][0]["parts"].size() == 1);
-        ASSERT_TRUE(singleRes["content"][0]["parts"][0]["text"].asString() == std::string("Line3\n"));
+        // MCP format: single range becomes single content item
+        ASSERT_TRUE(singleRes["content"].size() == 1);
+        ASSERT_TRUE(singleRes["content"][0]["type"].asString() == "text");
+        ASSERT_TRUE(singleRes["content"][0]["text"].asString() == std::string("Line3\n"));
 
         // cleanup
         std::filesystem::remove(tmpFile);
