@@ -298,9 +298,15 @@ Json::Value FileOpController::callTool(const Json::Value& params, std::function<
                     
                     // Create MCP-compliant content item
                     Json::Value content_item;
-                    if (format == "hex" || format == "binary") {
+                    // For hex output, return it as text so it conforms with MCP tool schema
+                    // (type: "text", text: "...").
+                    // Binary output handling remains as-is for now.
+                    if (format == "hex") {
+                        content_item["type"] = "text";
+                        content_item["format"] = "hex";
+                    } else if (format == "binary") {
                         content_item["type"] = "bytes";
-                        content_item["format"] = format;
+                        content_item["format"] = "binary";
                     } else {
                         content_item["type"] = "text";
                     }

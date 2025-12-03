@@ -64,7 +64,8 @@ See `.github/vscode-mcp-integration.md` for detailed integration guide.
 - **Result Format**: MCP-compliant Tool Result Schema
   - Each read operation returns `content[]` array with items containing `type` and `text` fields
   - Text/lines format: `{"type": "text", "text": "..."}`
-  - Hex/binary format: `{"type": "bytes", "format": "hex", "text": "..."}`
+  - Hex format: `{"type": "text", "format": "hex", "text": "..."}`
+  - Binary format: `{"type": "bytes", "format": "binary", "text": "..."}`
   - Multiple ranges create separate content items (no nested `parts[]`)
 - **Resources**: Lists preloaded files as resources
 - **Protocol**: JSON-RPC 2.0 over stdio

@@ -66,7 +66,7 @@ int main() {
         ASSERT_TRUE(res["content"][0]["type"].asString() == "text");
         ASSERT_TRUE(res["content"][0]["text"].asString() == std::string("World\n"));
         // s2 hex equals to hex(binary)
-        ASSERT_TRUE(res["content"][1]["type"].asString() == "bytes");
+        ASSERT_TRUE(res["content"][1]["type"].asString() == "text");
         ASSERT_TRUE(res["content"][1]["format"].asString() == "hex");
         ASSERT_TRUE(res["content"][1]["text"].asString() == to_hex(binary));
         // s3 text first 5 chars = "Hello"

@@ -50,3 +50,7 @@ Makefile
 # Test binaries
 test_*
 !test_*.cpp
+
+# CTest artifacts (temporary test results)
+Testing/
+build/Testing/
